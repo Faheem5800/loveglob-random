@@ -133,4 +133,45 @@ server.listen(PORT, () =>
   console.log(`LoveGlob server running on port ${PORT}`)
 );server.listen(PORT, () => {
   console.log(`LoveGlob server running on ${PORT}`);
+});      if (sp) sp.leave(roomId);
+      io.to(partnerId).emit('peer_left');
+    }
+
+    // requeue current user
+    const mateId = pickMatch(socket.id);
+    if (mateId) {
+      pair(socket.id, mateId);
+    } else {
+      waiting.push({ id: socket.id, ts: Date.now() });
+      socket.emit('queued');
+    }
+  });
+
+  // clean up on disconnect
+  socket.on('disconnect', () => {
+    // remove from waiting if there
+    const i = waiting.findIndex(w => w.id === socket.id);
+    if (i >= 0) waiting.splice(i, 1);
+
+    // notify partner if connected
+    const partnerId = partners.get(socket.id);
+    const roomId = rooms.get(socket.id);
+    partners.delete(socket.id);
+    rooms.delete(socket.id);
+
+    if (partnerId) {
+      partners.delete(partnerId);
+      rooms.delete(partnerId);
+      const sp = io.sockets.sockets.get(partnerId);
+      if (sp) sp.leave(roomId);
+      io.to(partnerId).emit('peer_left');
+    }
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () =>
+  console.log(`LoveGlob server running on port ${PORT}`)
+);server.listen(PORT, () => {
+  console.log(`LoveGlob server running on ${PORT}`);
 });
