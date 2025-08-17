@@ -10,88 +10,127 @@ const io = new Server(server, {
   cors: { origin: '*' }
 });
 
-// serve static files from /public
+// serve static frontend from /public
 app.use(express.static(path.join(__dirname, 'public')));
 
-let waiting = [];              // [{id: socketId}]
-const partners = new Map();    // socketId -> partnerId
-const rooms = new Map();       // socketId -> roomId
+// --- in-memory matchmaking state ---
+/** waiting: [{ id, ts }]  */
+const waiting = [];
+/** rooms: socketId -> roomId */
+const rooms = new Map();
+/** partners: socketId -> partnerId */
+const partners = new Map();
+
+function pickMatch(meId) {
+  // first non-self waiting user (simple: FIFO)
+  const idx = waiting.findIndex(w => w.id !== meId);
+  if (idx === -1) return null;
+  const mate = waiting.splice(idx, 1)[0]; // remove from queue
+  return mate.id;
+}
 
 function pair(a, b) {
   const room = `room_${a}_${b}_${Date.now()}`;
+
+  // remember links
   rooms.set(a, room);
   rooms.set(b, room);
   partners.set(a, b);
   partners.set(b, a);
 
+  // IMPORTANT: put both sockets into the same room
+  const sa = io.sockets.sockets.get(a);
+  const sb = io.sockets.sockets.get(b);
+  if (sa) sa.join(room);
+  if (sb) sb.join(room);
+
+  // tell each side who starts
   io.to(a).emit('matched', { roomId: room, initiator: true });
   io.to(b).emit('matched', { roomId: room, initiator: false });
 }
 
-function tryMatch() {
-  while (waiting.length >= 2) {
-    const a = waiting.shift().id;
-    const b = waiting.shift().id;
-    pair(a, b);
-  }
-}
-
 io.on('connection', (socket) => {
-  // join the queue
+  // user wants to find someone
   socket.on('join_queue', () => {
-    if (!waiting.find(w => w.id === socket.id) && !partners.has(socket.id)) {
-      waiting.push({ id: socket.id });
-      socket.emit('queued');
-      tryMatch();
+    // if we can match immediately, do it
+    const mateId = pickMatch(socket.id);
+    if (mateId) {
+      pair(socket.id, mateId);
+    } else {
+      // add to waiting list if not already there
+      if (!waiting.some(w => w.id === socket.id)) {
+        waiting.push({ id: socket.id, ts: Date.now() });
+        socket.emit('queued');
+      }
     }
   });
 
-  // forward WebRTC signaling
-  socket.on('signal', (data) => {
-    const room = rooms.get(socket.id);
-    if (!room) return;
-    // send to the other peer in the room
-    socket.to(room).emit('signal', data);
+  socket.on('leave_queue', () => {
+    const i = waiting.findIndex(w => w.id === socket.id);
+    if (i >= 0) waiting.splice(i, 1);
   });
 
-  // next: leave current room and re-enter queue
+  // relay WebRTC signaling within the room
+  socket.on('signal', (data) => {
+    const roomId = rooms.get(socket.id);
+    if (!roomId) return;
+    socket.to(roomId).emit('signal', data);
+  });
+
+  // user requests next partner
   socket.on('next', () => {
     const partnerId = partners.get(socket.id);
-    const room = rooms.get(socket.id);
+    const roomId = rooms.get(socket.id);
 
+    // unlink
+    partners.delete(socket.id);
+    rooms.delete(socket.id);
+
+    // make both leave the room
+    socket.leave(roomId);
     if (partnerId) {
-      partners.delete(socket.id);
       partners.delete(partnerId);
-      rooms.delete(socket.id);
       rooms.delete(partnerId);
-
+      const sp = io.sockets.sockets.get(partnerId);
+      if (sp) sp.leave(roomId);
       io.to(partnerId).emit('peer_left');
     }
 
-    socket.leave(room);
-    waiting.push({ id: socket.id });
-    socket.emit('queued');
-    tryMatch();
+    // requeue current user
+    const mateId = pickMatch(socket.id);
+    if (mateId) {
+      pair(socket.id, mateId);
+    } else {
+      waiting.push({ id: socket.id, ts: Date.now() });
+      socket.emit('queued');
+    }
   });
 
+  // clean up on disconnect
   socket.on('disconnect', () => {
-    // remove from waiting if present
-    waiting = waiting.filter(w => w.id !== socket.id);
+    // remove from waiting if there
+    const i = waiting.findIndex(w => w.id === socket.id);
+    if (i >= 0) waiting.splice(i, 1);
 
+    // notify partner if connected
     const partnerId = partners.get(socket.id);
-    const room = rooms.get(socket.id);
+    const roomId = rooms.get(socket.id);
+    partners.delete(socket.id);
+    rooms.delete(socket.id);
 
     if (partnerId) {
-      partners.delete(socket.id);
       partners.delete(partnerId);
-      rooms.delete(socket.id);
       rooms.delete(partnerId);
+      const sp = io.sockets.sockets.get(partnerId);
+      if (sp) sp.leave(roomId);
       io.to(partnerId).emit('peer_left');
     }
   });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+server.listen(PORT, () =>
+  console.log(`LoveGlob server running on port ${PORT}`)
+);server.listen(PORT, () => {
   console.log(`LoveGlob server running on ${PORT}`);
 });
