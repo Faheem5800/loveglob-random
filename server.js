@@ -1,127 +1,126 @@
-// Simple Express + Socket.IO matchmaker + WebRTC signaling
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const path = require("path");
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: "*" }
-});
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LoveGlob Random Video</title>
+  <style>
+    body { font-family: system-ui; display:flex; flex-direction:column; align-items:center; gap:10px; margin:20px; }
+    video { width:45vw; max-width:420px; background:#000; border-radius:12px; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; }
+    button { padding:10px 14px; border-radius:10px; border:1px solid #ddd; cursor:pointer; }
+    #status { font-weight:600; }
+  </style>
+</head>
+<body>
+  <h1>🎥 LoveGlob Random Video</h1>
+  <div class="row">
+    <video id="local" autoplay playsinline muted></video>
+    <video id="remote" autoplay playsinline></video>
+  </div>
+  <div class="row">
+    <button id="startBtn">Find Partner</button>
+    <button id="nextBtn" disabled>Next</button>
+    <span id="status">Idle</span>
+  </div>
 
-// serve static
-app.use(express.static(path.join(__dirname, "public")));
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();             // same-origin
+    const statusEl   = document.getElementById('status');
+    const startBtn   = document.getElementById('startBtn');
+    const nextBtn    = document.getElementById('nextBtn');
+    const localVideo = document.getElementById('local');
+    const remoteVideo= document.getElementById('remote');
 
-const waiting = []; // [{id, gender, interests:[], ts}]
-const rooms = new Map(); // socketId -> roomId
-const partners = new Map(); // socketId -> partnerId
-const reports = []; // in-memory; persist later
+    let pc, localStream, roomId, iAmInitiator = false;
 
-function overlap(a, b) {
-  return a.some(t => b.includes(t));
-}
+    const rtcConfig = { iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }] };
 
-function pickMatch(me) {
-  // 1) preferred by interests overlap
-  const withOverlap = waiting.filter(p => p.id !== me.id && overlap(p.interests, me.interests));
-  if (withOverlap.length) return withOverlap[0];
-  // 2) anyone
-  return waiting.find(p => p.id !== me.id) || null;
-}
-
-function pair(a, b) {
-  const roomId = `r_${a.id}_${b.id}`;
-  [a, b].forEach(s => {
-    const sock = io.sockets.sockets.get(s.id);
-    if (sock) sock.join(roomId);
-  });
-  partners.set(a.id, b.id);
-  partners.set(b.id, a.id);
-  rooms.set(a.id, roomId);
-  rooms.set(b.id, roomId);
-  io.to(roomId).emit("matched", { roomId });
-}
-
-io.on("connection", (socket) => {
-  socket.on("join_queue", (payload = {}) => {
-    const gender = (payload.gender || "unspecified").toString();
-    const interests = (payload.interests || []).map(t => t.toLowerCase().trim()).filter(Boolean);
-    const me = { id: socket.id, gender, interests, ts: Date.now() };
-
-    // try to match immediately
-    const mate = pickMatch(me);
-    if (mate) {
-      // remove mate from waiting
-      const idx = waiting.findIndex(w => w.id === mate.id);
-      if (idx >= 0) waiting.splice(idx, 1);
-      pair(me, mate);
-    } else {
-      waiting.push(me);
-      socket.emit("queued");
+    async function initMedia() {
+      if (localStream) return localStream;
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localVideo.srcObject = localStream;
+      return localStream;
     }
-  });
 
-  socket.on("leave_queue", () => {
-    const i = waiting.findIndex(w => w.id === socket.id);
-    if (i >= 0) waiting.splice(i, 1);
-  });
-
-  // WebRTC signaling relay
-  socket.on("signal", (data) => {
-    const roomId = rooms.get(socket.id);
-    if (!roomId) return;
-    socket.to(roomId).emit("signal", data);
-  });
-
-  socket.on("next", () => {
-    const pid = partners.get(socket.id);
-    const roomId = rooms.get(socket.id);
-    if (pid && roomId) {
-      io.to(roomId).emit("peer_left");
-      const other = io.sockets.sockets.get(pid);
-      [socket.id, pid].forEach(id => {
-        partners.delete(id);
-        rooms.delete(id);
-      });
-      if (other) other.leave(roomId);
-      socket.leave(roomId);
+    function makePeer() {
+      if (pc) pc.close();
+      pc = new RTCPeerConnection(rtcConfig);
+      localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+      pc.ontrack = e => { remoteVideo.srcObject = e.streams[0]; };
+      pc.onicecandidate = e => {
+        if (e.candidate) socket.emit('signal', { candidate: e.candidate });
+      };
     }
-    socket.emit("queued");
-    const me = { id: socket.id, gender: "unspecified", interests: [], ts: Date.now() };
-    const mate = pickMatch(me);
-    if (mate) {
-      const idx = waiting.findIndex(w => w.id === mate.id);
-      if (idx >= 0) waiting.splice(idx, 1);
-      pair(me, mate);
-    } else {
-      waiting.push(me);
+
+    async function startIfInitiator() {
+      if (!iAmInitiator) return;
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit('signal', { offer });
     }
-  });
 
-  socket.on("report", ({ reason = "" }) => {
-    const pid = partners.get(socket.id) || null;
-    reports.push({ reporter: socket.id, offender: pid, reason, at: new Date().toISOString() });
-    socket.emit("reported", { ok: true });
-  });
+    // UI
+    startBtn.onclick = async () => {
+      startBtn.disabled = true;
+      statusEl.textContent = 'Requesting camera...';
+      try {
+        await initMedia();
+        statusEl.textContent = 'Looking for a partner...';
+        socket.emit('join_queue', {});     // matches server
+      } catch {
+        statusEl.textContent = 'Camera/mic blocked.';
+        startBtn.disabled = false;
+      }
+    };
 
-  socket.on("disconnect", () => {
-    const i = waiting.findIndex(w => w.id === socket.id);
-    if (i >= 0) waiting.splice(i, 1);
+    nextBtn.onclick = () => {
+      socket.emit('next');
+      if (pc) pc.close();
+      remoteVideo.srcObject = null;
+      roomId = null; iAmInitiator = false;
+      statusEl.textContent = 'Finding new partner...';
+      socket.emit('join_queue', {});
+    };
 
-    const pid = partners.get(socket.id);
-    const roomId = rooms.get(socket.id);
-    if (pid && roomId) {
-      io.to(roomId).emit("peer_left");
-      const other = io.sockets.sockets.get(pid);
-      [socket.id, pid].forEach(id => {
-        partners.delete(id);
-        rooms.delete(id);
-      });
-      if (other) other.leave(roomId);
-    }
-  });
-});
+    // Socket events from server
+    socket.on('queued', () => {
+      nextBtn.disabled = false;
+      statusEl.textContent = 'Waiting for someone to join...';
+    });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`LoveGlob server running on :${PORT}`));
+    socket.on('matched', async ({ roomId: rid, initiator }) => {
+      roomId = rid; iAmInitiator = !!initiator;
+      statusEl.textContent = 'Partner found! Connecting...';
+      await initMedia();
+      makePeer();
+      startIfInitiator();
+    });
+
+    socket.on('signal', async (data) => {
+      await initMedia();
+      if (!pc) makePeer();
+      if (data.offer) {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('signal', { answer });
+      } else if (data.answer) {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+      } else if (data.candidate) {
+        try { await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch {}
+      }
+    });
+
+    socket.on('peer_left', () => {
+      statusEl.textContent = 'Partner left. Finding new one...';
+      if (pc) pc.close();
+      remoteVideo.srcObject = null;
+      roomId = null; iAmInitiator = false;
+      socket.emit('join_queue', {});
+    });
+  </script>
+</body>
+</html>
