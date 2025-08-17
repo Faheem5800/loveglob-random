@@ -1,98 +1,223 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>LoveGlob Random Video</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Love-Glob — Random Video</title>
   <style>
-    body { font-family: system-ui; margin: 16px; }
-    h1 { font-size: 32px; }
-    .row { display:flex; flex-direction:column; gap:12px; align-items:center; }
-    video { width: 90vw; max-width: 420px; background:#000; border-radius:14px; }
-    .controls { display:flex; gap:12px; align-items:center; margin-top:10px; }
-    button { padding:10px 16px; border-radius:10px; border:1px solid #ddd; }
-    #status { font-weight: 600; }
+    :root{
+      --bg1:#0f172a;      /* slate-900 */
+      --bg2:#111827;      /* gray-900 */
+      --card:#0b1220ee;   /* translucent */
+      --accent:#7c3aed;   /* violet-600 */
+      --accent2:#06b6d4;  /* cyan-500 */
+      --text:#e5e7eb;     /* gray-200 */
+      --muted:#9ca3af;    /* gray-400 */
+      --ring: #ffffff22;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --radius: 18px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; color:var(--text); font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      background:
+        radial-gradient(1200px 600px at 15% 10%, #1e293b 0%, transparent 60%),
+        radial-gradient(900px 600px at 85% 15%, #0f766e 0%, transparent 50%),
+        linear-gradient(160deg, var(--bg1), var(--bg2));
+    }
+
+    /* Header */
+    .hero{
+      max-width:1100px; margin:28px auto 10px; padding:0 18px;
+    }
+    .brand{
+      display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    }
+    .logo{
+      width:44px; height:44px; border-radius:12px; display:grid; place-items:center;
+      background:linear-gradient(135deg,var(--accent),var(--accent2));
+      box-shadow:var(--shadow);
+    }
+    .title{
+      font-weight:800; font-size:clamp(28px,5vw,46px);
+      letter-spacing:.2px;
+      background:linear-gradient(90deg,var(--text),#c4b5fd);
+      -webkit-background-clip:text; background-clip:text; color:transparent;
+    }
+    .tag{
+      margin-left:58px; margin-top:-6px; color:var(--muted); font-size:clamp(13px,2.4vw,16px);
+    }
+
+    /* Card */
+    .card{
+      max-width:1000px; margin:18px auto 40px; padding:22px;
+      background:var(--card); border:1px solid var(--ring); border-radius:var(--radius); box-shadow:var(--shadow);
+      backdrop-filter: blur(6px);
+    }
+    .grid{
+      display:grid; gap:14px;
+      grid-template-columns: 1fr;
+    }
+    @media (min-width: 880px){
+      .grid{grid-template-columns:1fr 1fr;}
+    }
+    video{
+      width:100%; aspect-ratio: 16/10; background:#000; border-radius:16px;
+      outline:1px solid #ffffff1a; box-shadow:0 8px 24px rgba(0,0,0,.35);
+    }
+
+    /* Controls */
+    .controls{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:16px; }
+    .btn{
+      appearance:none; border:0; cursor:pointer; user-select:none;
+      padding:12px 18px; border-radius:14px; color:#0b0f19; font-weight:700;
+      background:linear-gradient(135deg,var(--accent),var(--accent2));
+      box-shadow:0 10px 20px rgba(124,58,237,.25);
+      transition: transform .06s ease, filter .2s ease, opacity .2s ease;
+    }
+    .btn:active{ transform: translateY(1px) scale(.99); }
+    .btn.secondary{
+      background:#0b1228; color:var(--text); border:1px solid #ffffff22; box-shadow:none;
+    }
+    .btn:disabled{ opacity:.6; cursor:not-allowed; }
+
+    .status{
+      padding:8px 12px; border-radius:999px; font-weight:700; letter-spacing:.2px;
+      border:1px dashed #ffffff2e; color:#e6e6ff; background:#1d234033;
+    }
+    footer{ text-align:center; color:#94a3b8; font-size:12px; margin:18px 0 8px; }
   </style>
 </head>
 <body>
-  <h1>🎥 LoveGlob Random Video</h1>
+  <!-- Header -->
+  <header class="hero">
+    <div class="brand">
+      <div class="logo">💜</div>
+      <div class="title">Love-Glob</div>
+    </div>
+    <div class="tag">Let’s Come Under One Roof Sky</div>
+  </header>
 
-  <div class="row">
-    <video id="local" autoplay playsinline muted></video>
-    <video id="remote" autoplay playsinline></video>
+  <!-- Main card -->
+  <main class="card">
+    <div class="grid">
+      <video id="local" autoplay playsinline muted></video>
+      <video id="remote" autoplay playsinline></video>
+    </div>
 
     <div class="controls">
-      <button id="startBtn">Find Partner</button>
-      <button id="nextBtn" disabled>Next</button>
-      <span id="status">Idle</span>
+      <button id="startBtn" class="btn">Find Partner</button>
+      <button id="nextBtn" class="btn secondary" disabled>Next</button>
+      <span id="status" class="status">Idle</span>
     </div>
-  </div>
+  </main>
 
-  <!-- socket.io client served by server -->
+  <footer>Be kind. Skip if a match isn’t right. ✨</footer>
+
+  <!-- Logic (same behavior as before) -->
   <script src="/socket.io/socket.io.js"></script>
   <script>
-    const socket = io();                 // same-origin
+    const socket = io();
+
+    const statusEl = document.getElementById('status');
     const startBtn = document.getElementById('startBtn');
     const nextBtn  = document.getElementById('nextBtn');
-    const statusEl = document.getElementById('status');
     const localVideo  = document.getElementById('local');
     const remoteVideo = document.getElementById('remote');
 
-    let pc, localStream, iAmInitiator = false;
+    let pc, localStream, roomId, iAmInitiator = false;
 
     const rtcConfig = {
       iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
+      // Add TURN here later if needed
     };
 
-    async function getMedia() {
+    async function initMedia(){
       if (localStream) return localStream;
-      // Brave/Chrome mobile: must be user gesture, page is HTTPS (Render is)
       localStream = await navigator.mediaDevices.getUserMedia({ video:true, audio:true });
       localVideo.srcObject = localStream;
       return localStream;
     }
 
-    function makePeer() {
+    function makePeer(){
       if (pc) pc.close();
       pc = new RTCPeerConnection(rtcConfig);
-
-      getMedia().then(stream => {
-        stream.getTracks().forEach(t => pc.addTrack(t, stream));
-      });
-
-      pc.ontrack = (e) => { remoteVideo.srcObject = e.streams[0]; };
-      pc.onicecandidate = (e) => { if (e.candidate) socket.emit('signal', { candidate: e.candidate }); };
+      localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+      pc.ontrack = e => { remoteVideo.srcObject = e.streams[0]; };
+      pc.onicecandidate = e => { if (e.candidate) socket.emit('signal', { candidate: e.candidate }); };
     }
 
-    async function startInitiator() {
+    async function startIfInitiator(){
       if (!iAmInitiator) return;
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       socket.emit('signal', { offer });
     }
 
-    // UI handlers
+    // UI
     startBtn.onclick = async () => {
       startBtn.disabled = true;
-      statusEl.textContent = 'Requesting camera...';
-
-      try {
-        await getMedia();
-        statusEl.textContent = 'Looking for a partner...';
+      statusEl.textContent = 'Requesting camera…';
+      try{
+        await initMedia();
+        statusEl.textContent = 'Looking for a partner…';
         socket.emit('join_queue');
-      } catch (e) {
+      }catch{
         statusEl.textContent = 'Camera/mic blocked.';
         startBtn.disabled = false;
       }
     };
 
     nextBtn.onclick = () => {
-      socket.emit('next');
-      remoteVideo.srcObject = null;
-      iAmInitiator = false;
       nextBtn.disabled = true;
-      statusEl.textContent = 'Finding new partner...';
+      remoteVideo.srcObject = null;
+      roomId = null; iAmInitiator = false;
+      if (pc) pc.close();
+      statusEl.textContent = 'Finding new partner…';
+      socket.emit('next');
     };
+
+    // Socket events
+    socket.on('queued', () => {
+      statusEl.textContent = 'Waiting for someone to join…';
+    });
+
+    socket.on('matched', async ({ roomId: rid, initiator }) => {
+      roomId = rid; iAmInitiator = !!initiator;
+      statusEl.textContent = 'Partner found! Connecting…';
+      await initMedia();
+      makePeer();
+      nextBtn.disabled = false;
+      await startIfInitiator();
+    });
+
+    socket.on('signal', async (data) => {
+      await initMedia();
+      if (!pc) makePeer();
+
+      if (data.offer){
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('signal', { answer });
+      } else if (data.answer){
+        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+      } else if (data.candidate){
+        try { await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch {}
+      }
+    });
+
+    socket.on('peer_left', () => {
+      statusEl.textContent = 'Partner left. Finding new one…';
+      if (pc) pc.close();
+      remoteVideo.srcObject = null;
+      roomId = null; iAmInitiator = false;
+      socket.emit('join_queue');
+    });
+  </script>
+</body>
+</html>    };
 
     // Socket events
     socket.on('queued', () => {
